@@ -24,7 +24,7 @@ spec:
           - "{{ . }}"
         {{- end}}
       {{- end}}
-    image: "litmuschaos/litmus-go:latest"
+    image: "litmuschaos/go-runner:latest"
     args:
     - -c
     - ./experiments/{{ .Name }}
