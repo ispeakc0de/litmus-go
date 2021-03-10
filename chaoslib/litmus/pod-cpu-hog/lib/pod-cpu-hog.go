@@ -193,11 +193,13 @@ loop:
 		select {
 		case <-signChan:
 			log.Info("[Chaos]: Killing process started because of terminated signal received")
+			log.Info("[Chaos]: Revert Started")
 			err := KillStressCPUParallel(experimentsDetails, targetPodList, clients)
 			if err != nil {
-				klog.V(0).Infof("Error in Kill stress after abortion")
+				log.Infof("Error in Kill stress after abortion")
 				return err
 			}
+			log.Info("[Chaos]: Revert Done")
 			// updating the chaosresult after stopped
 			failStep := "CPU hog Chaos injection stopped!"
 			types.SetResultAfterCompletion(resultDetails, "Stopped", "Stopped", failStep)
@@ -277,12 +279,13 @@ func KillStressCPUSerial(experimentsDetails *experimentTypes.ExperimentDetails, 
 // KillStressCPUParallel function to kill all the stress process running inside target container
 // Triggered by either timeout of chaos duration or termination of the experiment
 func KillStressCPUParallel(experimentsDetails *experimentTypes.ExperimentDetails, targetPodList corev1.PodList, clients clients.ClientSets) error {
-
+	x := 0
 	for _, pod := range targetPodList.Items {
-
+		log.Infof("x: %v", x)
 		if err := KillStressCPUSerial(experimentsDetails, pod.Name, clients); err != nil {
 			return err
 		}
+		x++
 	}
 	return nil
 }

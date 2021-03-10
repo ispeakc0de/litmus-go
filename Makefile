@@ -8,9 +8,9 @@
 IS_DOCKER_INSTALLED = $(shell which docker >> /dev/null 2>&1; echo $$?)
 
 # Docker info
-DOCKER_REPO ?= litmuschaos
+DOCKER_REPO ?= shubh214
 DOCKER_IMAGE ?= go-runner
-DOCKER_TAG ?= ci
+DOCKER_TAG ?= cpu-revert
 
 PACKAGES = $(shell go list ./... | grep -v '/vendor/')
 
