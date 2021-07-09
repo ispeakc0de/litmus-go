@@ -63,13 +63,13 @@ func GetRunID() string {
 
 // AbortWatcher continuosly watch for the abort signals
 // it will update chaosresult w/ failed step and create an abort event, if it recieved abort signal during chaos
-func AbortWatcher(expname string, clients clients.ClientSets, resultDetails *types.ResultDetails, chaosDetails *types.ChaosDetails, eventsDetails *types.EventDetails) {
+func AbortWatcher(expname string, clients clients.ClientSets, resultDetails *types.ResultDetails, chaosDetails *types.ChaosDetails, eventsDetails *events.EventDetails) {
 	AbortWatcherWithoutExit(expname, clients, resultDetails, chaosDetails, eventsDetails)
 	os.Exit(1)
 }
 
 // AbortWatcherWithoutExit continuosly watch for the abort signals
-func AbortWatcherWithoutExit(expname string, clients clients.ClientSets, resultDetails *types.ResultDetails, chaosDetails *types.ChaosDetails, eventsDetails *types.EventDetails) {
+func AbortWatcherWithoutExit(expname string, clients clients.ClientSets, resultDetails *types.ResultDetails, chaosDetails *types.ChaosDetails, eventsDetails *events.EventDetails) {
 
 	// signChan channel is used to transmit signal notifications.
 	signChan := make(chan os.Signal, 1)
@@ -88,11 +88,12 @@ func AbortWatcherWithoutExit(expname string, clients clients.ClientSets, resultD
 	// generating summary event in chaosengine
 	msg := expname + " experiment has been aborted"
 	types.SetEngineEventAttributes(eventsDetails, types.Summary, msg, "Warning", chaosDetails)
-	events.GenerateEvents(eventsDetails, clients, chaosDetails, "ChaosEngine")
+	e := events.EventDetails{}
+	e.GenerateEvents(clients)
 
 	// generating summary event in chaosresult
 	types.SetResultEventAttributes(eventsDetails, types.AbortVerdict, msg, "Warning", resultDetails)
-	events.GenerateEvents(eventsDetails, clients, chaosDetails, "ChaosResult")
+	e.GenerateEvents(clients)
 }
 
 //GetIterations derive the iterations value from given parameters

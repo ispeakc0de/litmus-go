@@ -2,6 +2,7 @@ package types
 
 import (
 	"github.com/litmuschaos/chaos-operator/pkg/apis/litmuschaos/v1alpha1"
+	"github.com/litmuschaos/litmus-go/pkg/events"
 	clientTypes "k8s.io/apimachinery/pkg/types"
 )
 
@@ -121,7 +122,7 @@ func SetResultAfterCompletion(resultDetails *ResultDetails, verdict v1alpha1.Res
 }
 
 //SetEngineEventAttributes initialise attributes for event generation in chaos engine
-func SetEngineEventAttributes(eventsDetails *EventDetails, Reason, Message, Type string, chaosDetails *ChaosDetails) {
+func SetEngineEventAttributes(eventsDetails *events.EventDetails, Reason, Message, Type string, chaosDetails *ChaosDetails) {
 
 	eventsDetails.Reason = Reason
 	eventsDetails.Message = Message
@@ -132,7 +133,7 @@ func SetEngineEventAttributes(eventsDetails *EventDetails, Reason, Message, Type
 }
 
 //SetResultEventAttributes initialise attributes for event generation in chaos result
-func SetResultEventAttributes(eventsDetails *EventDetails, Reason, Message, Type string, resultDetails *ResultDetails) {
+func SetResultEventAttributes(eventsDetails *events.EventDetails, Reason, Message, Type string, resultDetails *ResultDetails) {
 
 	eventsDetails.Reason = Reason
 	eventsDetails.Message = Message

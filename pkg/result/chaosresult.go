@@ -227,7 +227,7 @@ func SetResultUID(resultDetails *types.ResultDetails, clients clients.ClientSets
 }
 
 //RecordAfterFailure update the chaosresult and create the summary events
-func RecordAfterFailure(chaosDetails *types.ChaosDetails, resultDetails *types.ResultDetails, failStep string, clients clients.ClientSets, eventsDetails *types.EventDetails) {
+func RecordAfterFailure(chaosDetails *types.ChaosDetails, resultDetails *types.ResultDetails, failStep string, clients clients.ClientSets, eventsDetails *events.EventDetails) {
 
 	// update the chaos result
 	types.SetResultAfterCompletion(resultDetails, "Fail", "Completed", failStep)
@@ -236,12 +236,13 @@ func RecordAfterFailure(chaosDetails *types.ChaosDetails, resultDetails *types.R
 	// add the summary event in chaos result
 	msg := "experiment: " + chaosDetails.ExperimentName + ", Result: " + string(resultDetails.Verdict)
 	types.SetResultEventAttributes(eventsDetails, types.FailVerdict, msg, "Warning", resultDetails)
-	events.GenerateEvents(eventsDetails, clients, chaosDetails, "ChaosResult")
+	e := events.EventDetails{}
+	e.GenerateEvents(clients)
 
 	// add the summary event in chaos engine
 	if chaosDetails.EngineName != "" {
 		types.SetEngineEventAttributes(eventsDetails, types.Summary, msg, "Warning", chaosDetails)
-		events.GenerateEvents(eventsDetails, clients, chaosDetails, "ChaosEngine")
+		e.GenerateEvents(clients)
 	}
 
 }

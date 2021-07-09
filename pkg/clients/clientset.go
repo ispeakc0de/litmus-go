@@ -20,54 +20,62 @@ type ClientSets struct {
 }
 
 // GenerateClientSetFromKubeConfig will generation both ClientSets (k8s, and Litmus) as well as the KubeConfig
-func (clientSets *ClientSets) GenerateClientSetFromKubeConfig() error {
+func (c *ClientSets) GenerateClientSetFromKubeConfig() error {
 
-	config, err := getKubeConfig()
-	if err != nil {
+	if err := c.getKubeConfig(); err != nil {
 		return err
 	}
-	k8sClientSet, err := generateK8sClientSet(config)
-	if err != nil {
+	if err := c.generateK8sClientSet(); err != nil {
 		return err
 	}
-	litmusClientSet, err := generateLitmusClientSet(config)
-	if err != nil {
+	if err := c.generateLitmusClientSet(); err != nil {
 		return err
 	}
-	dynamicClientSet, err := dynamic.NewForConfig(config)
-	if err != nil {
+	if err := c.generateDynamicClientSet(); err != nil {
 		return err
 	}
-	clientSets.KubeClient = k8sClientSet
-	clientSets.LitmusClient = litmusClientSet
-	clientSets.KubeConfig = config
-	clientSets.DynamicClient = dynamicClientSet
 	return nil
 }
 
-// getKubeConfig setup the config for access cluster resource
-func getKubeConfig() (*rest.Config, error) {
+// GetKubeConfig setup the config for access cluster resource
+func (c *ClientSets) getKubeConfig() error {
 	kubeconfig := flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
 	flag.Parse()
 	// It uses in-cluster config, if kubeconfig path is not specified
 	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
-	return config, err
+	if err != nil {
+		return err
+	}
+	c.KubeConfig = config
+	return nil
 }
 
 // generateK8sClientSet will generation k8s client
-func generateK8sClientSet(config *rest.Config) (*kubernetes.Clientset, error) {
-	k8sClientSet, err := kubernetes.NewForConfig(config)
+func (c *ClientSets) generateK8sClientSet() error {
+	k8sClientSet, err := kubernetes.NewForConfig(c.KubeConfig)
 	if err != nil {
-		return nil, errors.Wrapf(err, "Unable to generate kubernetes clientSet, err: %v: ", err)
+		return errors.Wrapf(err, "Unable to generate kubernetes clientSet, err: %v: ", err)
 	}
-	return k8sClientSet, nil
+	c.KubeClient = k8sClientSet
+	return nil
 }
 
 // generateLitmusClientSet will generate a LitmusClient
-func generateLitmusClientSet(config *rest.Config) (*chaosClient.LitmuschaosV1alpha1Client, error) {
-	litmusClientSet, err := chaosClient.NewForConfig(config)
+func (c *ClientSets) generateLitmusClientSet() error {
+	litmusClientSet, err := chaosClient.NewForConfig(c.KubeConfig)
 	if err != nil {
-		return nil, errors.Wrapf(err, "Unable to create LitmusClientSet, err: %v", err)
+		return errors.Wrapf(err, "Unable to create LitmusClientSet, err: %v", err)
 	}
-	return litmusClientSet, nil
+	c.LitmusClient = litmusClientSet
+	return nil
+}
+
+// generateDynamicClientSet will generate a DynamicClient
+func (c *ClientSets) generateDynamicClientSet() error {
+	dynamicClientSet, err := dynamic.NewForConfig(c.KubeConfig)
+	if err != nil {
+		return errors.Wrapf(err, "Unable to create DynamicClientSet, err: %v", err)
+	}
+	c.DynamicClient = dynamicClientSet
+	return nil
 }

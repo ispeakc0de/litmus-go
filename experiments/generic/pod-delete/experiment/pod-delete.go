@@ -1,4 +1,4 @@
-package experiment
+package main
 
 import (
 	"github.com/litmuschaos/chaos-operator/pkg/apis/litmuschaos/v1alpha1"
@@ -18,12 +18,20 @@ import (
 )
 
 // PodDelete inject the pod-delete chaos
-func PodDelete(clients clients.ClientSets) {
+func main() {
+
+	clients := clients.ClientSets{}
+
+	//Getting kubeConfig and Generate ClientSets
+	if err := clients.GenerateClientSetFromKubeConfig(); err != nil {
+		log.Errorf("Unable to Get the kubeconfig, err: %v", err)
+		return
+	}
 
 	experimentsDetails := experimentTypes.ExperimentDetails{}
 	resultDetails := types.ResultDetails{}
-	eventsDetails := types.EventDetails{}
 	chaosDetails := types.ChaosDetails{}
+	eventsDetails := events.EventDetails{}
 
 	//Fetching all the ENV passed from the runner pod
 	log.Infof("[PreReq]: Getting the ENV for the %v experiment", experimentsDetails.ExperimentName)
@@ -58,7 +66,7 @@ func PodDelete(clients clients.ClientSets) {
 	// generating the event in chaosresult to marked the verdict as awaited
 	msg := "experiment: " + experimentsDetails.ExperimentName + ", Result: Awaited"
 	types.SetResultEventAttributes(&eventsDetails, types.AwaitedVerdict, msg, "Normal", &resultDetails)
-	events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosResult")
+	eventsDetails.GenerateEvents(clients)
 
 	//DISPLAY THE APP INFORMATION
 	log.InfoWithValues("The application information is as follows", logrus.Fields{
@@ -86,12 +94,12 @@ func PodDelete(clients clients.ClientSets) {
 		// run the probes in the pre-chaos check
 		if len(resultDetails.ProbeDetails) != 0 {
 
-			if err := probe.RunProbes(&chaosDetails, clients, &resultDetails, "PreChaos", &eventsDetails); err != nil {
+			if err := probe.RunProbes(&chaosDetails, clients, &resultDetails, "PreChaos"); err != nil {
 				log.Errorf("Probe Failed, err: %v", err)
 				failStep := "Failed while running probes"
 				msg := "AUT: Running, Probes: Unsuccessful"
 				types.SetEngineEventAttributes(&eventsDetails, types.PreChaosCheck, msg, "Warning", &chaosDetails)
-				events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosEngine")
+				eventsDetails.GenerateEvents(clients)
 				result.RecordAfterFailure(&chaosDetails, &resultDetails, failStep, clients, &eventsDetails)
 				return
 			}
@@ -99,7 +107,7 @@ func PodDelete(clients clients.ClientSets) {
 		}
 		// generating the events for the pre-chaos check
 		types.SetEngineEventAttributes(&eventsDetails, types.PreChaosCheck, msg, "Normal", &chaosDetails)
-		events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosEngine")
+		eventsDetails.GenerateEvents(clients)
 	}
 
 	// Including the litmus lib for pod-delete
@@ -143,12 +151,12 @@ func PodDelete(clients clients.ClientSets) {
 
 		// run the probes in the post-chaos check
 		if len(resultDetails.ProbeDetails) != 0 {
-			if err := probe.RunProbes(&chaosDetails, clients, &resultDetails, "PostChaos", &eventsDetails); err != nil {
+			if err := probe.RunProbes(&chaosDetails, clients, &resultDetails, "PostChaos"); err != nil {
 				log.Errorf("Probes Failed, err: %v", err)
 				failStep := "Failed while running probes"
 				msg := "AUT: Running, Probes: Unsuccessful"
 				types.SetEngineEventAttributes(&eventsDetails, types.PostChaosCheck, msg, "Warning", &chaosDetails)
-				events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosEngine")
+				eventsDetails.GenerateEvents(clients)
 				result.RecordAfterFailure(&chaosDetails, &resultDetails, failStep, clients, &eventsDetails)
 				return
 			}
@@ -157,7 +165,7 @@ func PodDelete(clients clients.ClientSets) {
 
 		// generating post chaos event
 		types.SetEngineEventAttributes(&eventsDetails, types.PostChaosCheck, msg, "Normal", &chaosDetails)
-		events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosEngine")
+		eventsDetails.GenerateEvents(clients)
 	}
 
 	//Updating the chaosResult in the end of experiment
@@ -176,11 +184,11 @@ func PodDelete(clients clients.ClientSets) {
 		eventType = "Warning"
 	}
 	types.SetResultEventAttributes(&eventsDetails, reason, msg, eventType, &resultDetails)
-	events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosResult")
+	eventsDetails.GenerateEvents(clients)
 
 	if experimentsDetails.EngineName != "" {
 		msg := experimentsDetails.ExperimentName + " experiment has been " + string(resultDetails.Verdict) + "ed"
 		types.SetEngineEventAttributes(&eventsDetails, types.Summary, msg, "Normal", &chaosDetails)
-		events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosEngine")
+		eventsDetails.GenerateEvents(clients)
 	}
 }

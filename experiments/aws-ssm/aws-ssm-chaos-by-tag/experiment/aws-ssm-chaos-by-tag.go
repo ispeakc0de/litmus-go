@@ -25,6 +25,7 @@ func AWSSSMChaosByTag(clients clients.ClientSets) {
 	resultDetails := types.ResultDetails{}
 	eventsDetails := types.EventDetails{}
 	chaosDetails := types.ChaosDetails{}
+	e := events.EventDetails{}
 
 	//Fetching all the ENV passed from the runner pod
 	log.Infof("[PreReq]: Getting the ENV for the %v experiment", experimentsDetails.ExperimentName)
@@ -59,7 +60,7 @@ func AWSSSMChaosByTag(clients clients.ClientSets) {
 	// generating the event in chaosresult to marked the verdict as awaited
 	msg := "experiment: " + experimentsDetails.ExperimentName + ", Result: Awaited"
 	types.SetResultEventAttributes(&eventsDetails, types.AwaitedVerdict, msg, "Normal", &resultDetails)
-	events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosResult")
+	e.GenerateEvents(clients)
 
 	// Calling AbortWatcher go routine, it will continuously watch for the abort signal and generate the required events and result
 	go common.AbortWatcherWithoutExit(experimentsDetails.ExperimentName, clients, &resultDetails, &chaosDetails, &eventsDetails)
@@ -113,7 +114,7 @@ func AWSSSMChaosByTag(clients clients.ClientSets) {
 				failStep := "Failed while running probes"
 				msg := "AUT: Running, Probes: Unsuccessful"
 				types.SetEngineEventAttributes(&eventsDetails, types.PreChaosCheck, msg, "Warning", &chaosDetails)
-				events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosEngine")
+				e.GenerateEvents(clients)
 				result.RecordAfterFailure(&chaosDetails, &resultDetails, failStep, clients, &eventsDetails)
 				return
 			}
@@ -121,7 +122,7 @@ func AWSSSMChaosByTag(clients clients.ClientSets) {
 		}
 		// generating the events for the pre-chaos check
 		types.SetEngineEventAttributes(&eventsDetails, types.PreChaosCheck, msg, "Normal", &chaosDetails)
-		events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosEngine")
+		e.GenerateEvents(clients)
 	}
 
 	// Including the litmus lib for aws-ssm-chaos-by-tag
@@ -190,7 +191,7 @@ func AWSSSMChaosByTag(clients clients.ClientSets) {
 				failStep := "Failed while running probes"
 				msg := "AUT: Running, Probes: Unsuccessful"
 				types.SetEngineEventAttributes(&eventsDetails, types.PostChaosCheck, msg, "Warning", &chaosDetails)
-				events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosEngine")
+				e.GenerateEvents(clients)
 				result.RecordAfterFailure(&chaosDetails, &resultDetails, failStep, clients, &eventsDetails)
 				return
 			}
@@ -199,7 +200,7 @@ func AWSSSMChaosByTag(clients clients.ClientSets) {
 
 		// generating post chaos event
 		types.SetEngineEventAttributes(&eventsDetails, types.PostChaosCheck, msg, "Normal", &chaosDetails)
-		events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosEngine")
+		e.GenerateEvents(clients)
 	}
 
 	//Updating the chaosResult in the end of experiment
@@ -218,12 +219,12 @@ func AWSSSMChaosByTag(clients clients.ClientSets) {
 		eventType = "Warning"
 	}
 	types.SetResultEventAttributes(&eventsDetails, reason, msg, eventType, &resultDetails)
-	events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosResult")
+	e.GenerateEvents(clients)
 
 	if experimentsDetails.EngineName != "" {
 		msg := experimentsDetails.ExperimentName + " experiment has been " + string(resultDetails.Verdict) + "ed"
 		types.SetEngineEventAttributes(&eventsDetails, types.Summary, msg, "Normal", &chaosDetails)
-		events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosEngine")
+		e.GenerateEvents(clients)
 	}
 
 }

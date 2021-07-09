@@ -26,6 +26,7 @@ func CasssandraPodDelete(clients clients.ClientSets) {
 	resultDetails := types.ResultDetails{}
 	eventsDetails := types.EventDetails{}
 	chaosDetails := types.ChaosDetails{}
+	e := events.EventDetails{}
 
 	//Fetching all the ENV passed from the runner pod
 	log.Info("[PreReq]: Getting the ENV for the cassandra-pod-delete experiment")
@@ -60,7 +61,7 @@ func CasssandraPodDelete(clients clients.ClientSets) {
 	// generating the event in chaosresult to marked the verdict as awaited
 	msg := "experiment: " + experimentsDetails.ChaoslibDetail.ExperimentName + ", Result: Awaited"
 	types.SetResultEventAttributes(&eventsDetails, types.AwaitedVerdict, msg, "Normal", &resultDetails)
-	events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosResult")
+	e.GenerateEvents(clients)
 
 	//DISPLAY THE APP INFORMATION
 	log.InfoWithValues("The application informations are as follows", logrus.Fields{
@@ -96,7 +97,7 @@ func CasssandraPodDelete(clients clients.ClientSets) {
 				failStep := "Failed while running probes"
 				msg := "AUT: Running, Probes: Unsuccessful"
 				types.SetEngineEventAttributes(&eventsDetails, types.PreChaosCheck, msg, "Warning", &chaosDetails)
-				events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosEngine")
+				e.GenerateEvents(clients)
 				result.RecordAfterFailure(&chaosDetails, &resultDetails, failStep, clients, &eventsDetails)
 				return
 			}
@@ -104,7 +105,7 @@ func CasssandraPodDelete(clients clients.ClientSets) {
 		}
 		// generating the events for the pre-chaos check
 		types.SetEngineEventAttributes(&eventsDetails, types.PreChaosCheck, msg, "Normal", &chaosDetails)
-		events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosEngine")
+		e.GenerateEvents(clients)
 	}
 
 	// Checking the load distribution on the ring (pre-chaos)
@@ -168,7 +169,7 @@ func CasssandraPodDelete(clients clients.ClientSets) {
 				failStep := "Failed while running probes"
 				msg := "AUT: Running, Probes: Unsuccessful"
 				types.SetEngineEventAttributes(&eventsDetails, types.PostChaosCheck, msg, "Warning", &chaosDetails)
-				events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosEngine")
+				e.GenerateEvents(clients)
 				result.RecordAfterFailure(&chaosDetails, &resultDetails, failStep, clients, &eventsDetails)
 				return
 			}
@@ -177,7 +178,7 @@ func CasssandraPodDelete(clients clients.ClientSets) {
 
 		// generating post chaos event
 		types.SetEngineEventAttributes(&eventsDetails, types.PostChaosCheck, msg, "Normal", &chaosDetails)
-		events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosEngine")
+		e.GenerateEvents(clients)
 	}
 
 	// Checking the load distribution on the ring (post-chaos)
@@ -223,12 +224,12 @@ func CasssandraPodDelete(clients clients.ClientSets) {
 	}
 
 	types.SetResultEventAttributes(&eventsDetails, reason, msg, eventType, &resultDetails)
-	events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosResult")
+	e.GenerateEvents(clients)
 
 	if experimentsDetails.ChaoslibDetail.EngineName != "" {
 		msg := experimentsDetails.ChaoslibDetail.ExperimentName + " experiment has been " + string(resultDetails.Verdict) + "ed"
 		types.SetEngineEventAttributes(&eventsDetails, types.Summary, msg, "Normal", &chaosDetails)
-		events.GenerateEvents(&eventsDetails, clients, &chaosDetails, "ChaosEngine")
+		e.GenerateEvents(clients)
 	}
 
 }

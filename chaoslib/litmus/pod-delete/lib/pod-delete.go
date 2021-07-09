@@ -19,7 +19,7 @@ import (
 )
 
 //PreparePodDelete contains the prepration steps before chaos injection
-func PreparePodDelete(experimentsDetails *experimentTypes.ExperimentDetails, clients clients.ClientSets, resultDetails *types.ResultDetails, eventsDetails *types.EventDetails, chaosDetails *types.ChaosDetails) error {
+func PreparePodDelete(experimentsDetails *experimentTypes.ExperimentDetails, clients clients.ClientSets, resultDetails *types.ResultDetails, eventsDetails *events.EventDetails, chaosDetails *types.ChaosDetails) error {
 
 	//Waiting for the ramp time before chaos injection
 	if experimentsDetails.RampTime != 0 {
@@ -49,11 +49,11 @@ func PreparePodDelete(experimentsDetails *experimentTypes.ExperimentDetails, cli
 }
 
 // injectChaosInSerialMode delete the target application pods serial mode(one by one)
-func injectChaosInSerialMode(experimentsDetails *experimentTypes.ExperimentDetails, clients clients.ClientSets, chaosDetails *types.ChaosDetails, eventsDetails *types.EventDetails, resultDetails *types.ResultDetails) error {
+func injectChaosInSerialMode(experimentsDetails *experimentTypes.ExperimentDetails, clients clients.ClientSets, chaosDetails *types.ChaosDetails, eventsDetails *events.EventDetails, resultDetails *types.ResultDetails) error {
 
 	// run the probes during chaos
 	if len(resultDetails.ProbeDetails) != 0 {
-		if err := probe.RunProbes(chaosDetails, clients, resultDetails, "DuringChaos", eventsDetails); err != nil {
+		if err := probe.RunProbes(chaosDetails, clients, resultDetails, "DuringChaos"); err != nil {
 			return err
 		}
 	}
@@ -87,7 +87,7 @@ func injectChaosInSerialMode(experimentsDetails *experimentTypes.ExperimentDetai
 		if experimentsDetails.EngineName != "" {
 			msg := "Injecting " + experimentsDetails.ExperimentName + " chaos on application pod"
 			types.SetEngineEventAttributes(eventsDetails, types.ChaosInject, msg, "Normal", chaosDetails)
-			events.GenerateEvents(eventsDetails, clients, chaosDetails, "ChaosEngine")
+			eventsDetails.GenerateEvents(clients)
 		}
 
 		//Deleting the application pod
@@ -136,11 +136,11 @@ func injectChaosInSerialMode(experimentsDetails *experimentTypes.ExperimentDetai
 }
 
 // injectChaosInParallelMode delete the target application pods in parallel mode (all at once)
-func injectChaosInParallelMode(experimentsDetails *experimentTypes.ExperimentDetails, clients clients.ClientSets, chaosDetails *types.ChaosDetails, eventsDetails *types.EventDetails, resultDetails *types.ResultDetails) error {
+func injectChaosInParallelMode(experimentsDetails *experimentTypes.ExperimentDetails, clients clients.ClientSets, chaosDetails *types.ChaosDetails, eventsDetails *events.EventDetails, resultDetails *types.ResultDetails) error {
 
 	// run the probes during chaos
 	if len(resultDetails.ProbeDetails) != 0 {
-		if err := probe.RunProbes(chaosDetails, clients, resultDetails, "DuringChaos", eventsDetails); err != nil {
+		if err := probe.RunProbes(chaosDetails, clients, resultDetails, "DuringChaos"); err != nil {
 			return err
 		}
 	}
@@ -174,7 +174,7 @@ func injectChaosInParallelMode(experimentsDetails *experimentTypes.ExperimentDet
 		if experimentsDetails.EngineName != "" {
 			msg := "Injecting " + experimentsDetails.ExperimentName + " chaos on application pod"
 			types.SetEngineEventAttributes(eventsDetails, types.ChaosInject, msg, "Normal", chaosDetails)
-			events.GenerateEvents(eventsDetails, clients, chaosDetails, "ChaosEngine")
+			eventsDetails.GenerateEvents(clients)
 		}
 
 		//Deleting the application pod

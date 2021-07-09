@@ -20,7 +20,7 @@ var err error
 
 // RunProbes contains the steps to trigger the probes
 // It contains steps to trigger all three probes: k8sprobe, httpprobe, cmdprobe
-func RunProbes(chaosDetails *types.ChaosDetails, clients clients.ClientSets, resultDetails *types.ResultDetails, phase string, eventsDetails *types.EventDetails) error {
+func RunProbes(chaosDetails *types.ChaosDetails, clients clients.ClientSets, resultDetails *types.ResultDetails, phase string) error {
 
 	// get the probes details from the chaosengine
 	probes, err := getProbesFromEngine(chaosDetails, clients)
