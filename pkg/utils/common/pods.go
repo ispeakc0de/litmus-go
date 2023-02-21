@@ -364,6 +364,30 @@ func GetExperimentPod(name, namespace string, clients clients.ClientSets) (*core
 	return pod, nil
 }
 
+//GetContainerIDs  derive the container ids of all the container of target pod
+func GetContainerIDs(appNamespace, targetPod string, targetContainers []string, clients clients.ClientSets, source string) ([]string, error) {
+
+	pod, err := clients.KubeClient.CoreV1().Pods(appNamespace).Get(context.Background(), targetPod, v1.GetOptions{})
+	if err != nil {
+		return nil, cerrors.Error{ErrorCode: cerrors.ErrorTypeHelper, Source: source, Target: fmt.Sprintf("{podName: %s, namespace: %s}", targetPod, appNamespace), Reason: err.Error()}
+	}
+
+	var containerIDs []string
+
+	// filtering out the container id from the details of containers inside containerStatuses of the given pod
+	// container id is present in the form of <runtime>://<container-id>
+	for _, container := range pod.Status.ContainerStatuses {
+		if Contains(container.Name, targetContainers) || IsAllContainers(targetContainers) {
+			containerIDs = append(containerIDs, strings.Split(container.ContainerID, "//")[1])
+		}
+	}
+
+	if len(containerIDs) == 0 {
+		return nil, cerrors.Error{ErrorCode: cerrors.ErrorTypeContainerRuntime, Source: source, Target: fmt.Sprintf("{podName: %s, namespace: %s, container: %s}", targetPod, appNamespace, targetContainers), Reason: fmt.Sprintf("no container found with specified name")}
+	}
+	return containerIDs, nil
+}
+
 //GetContainerID  derive the container id of the application container
 func GetContainerID(appNamespace, targetPod, targetContainer string, clients clients.ClientSets, source string) (string, error) {
 

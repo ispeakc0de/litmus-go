@@ -232,6 +232,13 @@ func Contains(val interface{}, slice interface{}) bool {
 	return false
 }
 
+func IsAllContainers(container []string) bool {
+	if len(container) == 1 && strings.ToLower(container[0]) == "all" {
+		return true
+	}
+	return false
+}
+
 func RunBashCommand(command string, failMsg string, source string) error {
 	cmd := exec.Command("/bin/bash", "-c", command)
 	return RunCLICommands(cmd, source, "", failMsg, cerrors.ErrorTypeHelper)
