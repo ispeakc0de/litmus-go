@@ -86,21 +86,28 @@ func preparePodDNSChaos(experimentsDetails *experimentTypes.ExperimentDetails, c
 
 	for _, t := range targetList.Target {
 		td := targetDetails{
-			Name:            t.Name,
-			Namespace:       t.Namespace,
-			TargetContainer: t.TargetContainer,
-			Source:          chaosDetails.ChaosPodName,
+			Name:      t.Name,
+			Namespace: t.Namespace,
+			Source:    chaosDetails.ChaosPodName,
 		}
 
-		td.ContainerId, err = common.GetContainerID(td.Namespace, td.Name, td.TargetContainer, clients, td.Source)
+		td.TargetContainers, err = common.GetTargetContainers(t.Name, t.Namespace, t.TargetContainer, chaosDetails.ChaosPodName, clients)
+		if err != nil {
+			return stacktrace.Propagate(err, "could not get target containers")
+		}
+
+		td.ContainerIds, err = common.GetContainerIDs(t.Namespace, t.Name, td.TargetContainers, clients, td.Source)
 		if err != nil {
 			return stacktrace.Propagate(err, "could not get container id")
 		}
 
-		// extract out the pid of the target container
-		td.Pid, err = common.GetPID(experimentsDetails.ContainerRuntime, td.ContainerId, experimentsDetails.SocketPath, td.Source)
-		if err != nil {
-			return stacktrace.Propagate(err, "could not get container pid")
+		for _, cid := range td.ContainerIds {
+			// extract out the pid of the target container
+			pid, err := common.GetPID(experimentsDetails.ContainerRuntime, cid, experimentsDetails.SocketPath, td.Source)
+			if err != nil {
+				return stacktrace.Propagate(err, "could not get container pid")
+			}
+			td.Pids = append(td.Pids, pid)
 		}
 		targets = append(targets, td)
 	}
@@ -118,11 +125,17 @@ func preparePodDNSChaos(experimentsDetails *experimentTypes.ExperimentDetails, c
 	done := make(chan error, 1)
 
 	for index, t := range targets {
-		targets[index].Cmd, err = injectChaos(experimentsDetails, t)
-		if err != nil {
-			return stacktrace.Propagate(err, "could not inject chaos")
+		for i := range t.Pids {
+			cmd, err := injectChaos(experimentsDetails, t, i)
+			if err != nil {
+				if revertErr := terminateProcess(t); revertErr != nil {
+					log.Errorf("failed to revert chaos: %v", revertErr)
+				}
+				return stacktrace.Propagate(err, "could not inject chaos")
+			}
+			targets[index].Cmds = append(targets[index].Cmds, cmd)
+			log.Infof("successfully injected chaos on target: {name: %s, namespace: %v, container: %v}", t.Name, t.Namespace, t.TargetContainers[i])
 		}
-		log.Infof("successfully injected chaos on target: {name: %s, namespace: %v, container: %v}", t.Name, t.Namespace, t.TargetContainer)
 		if err = result.AnnotateChaosResult(resultDetails.Name, chaosDetails.ChaosNamespace, "injected", "pod", t.Name); err != nil {
 			if revertErr := terminateProcess(t); revertErr != nil {
 				return cerrors.PreserveError{ErrString: fmt.Sprintf("[%s,%s]", stacktrace.RootCause(err).Error(), stacktrace.RootCause(revertErr).Error())}
@@ -143,8 +156,10 @@ func preparePodDNSChaos(experimentsDetails *experimentTypes.ExperimentDetails, c
 	go func() {
 		var errList []string
 		for _, t := range targets {
-			if err := t.Cmd.Wait(); err != nil {
-				errList = append(errList, err.Error())
+			for i := range t.Cmds {
+				if err := t.Cmds[i].Wait(); err != nil {
+					errList = append(errList, err.Error())
+				}
 			}
 		}
 		if len(errList) != 0 {
@@ -203,11 +218,11 @@ func preparePodDNSChaos(experimentsDetails *experimentTypes.ExperimentDetails, c
 	return nil
 }
 
-func injectChaos(experimentsDetails *experimentTypes.ExperimentDetails, t targetDetails) (*exec.Cmd, error) {
+func injectChaos(experimentsDetails *experimentTypes.ExperimentDetails, t targetDetails, index int) (*exec.Cmd, error) {
 
 	// prepare dns interceptor
 	var out bytes.Buffer
-	commandTemplate := fmt.Sprintf("sudo TARGET_PID=%d CHAOS_TYPE=%s SPOOF_MAP='%s' TARGET_HOSTNAMES='%s' CHAOS_DURATION=%d MATCH_SCHEME=%s nsutil -p -n -t %d -- dns_interceptor", t.Pid, experimentsDetails.ChaosType, experimentsDetails.SpoofMap, experimentsDetails.TargetHostNames, experimentsDetails.ChaosDuration, experimentsDetails.MatchScheme, t.Pid)
+	commandTemplate := fmt.Sprintf("sudo TARGET_PID=%d CHAOS_TYPE=%s SPOOF_MAP='%s' TARGET_HOSTNAMES='%s' CHAOS_DURATION=%d MATCH_SCHEME=%s nsutil -p -n -t %d -- dns_interceptor", t.Pids[index], experimentsDetails.ChaosType, experimentsDetails.SpoofMap, experimentsDetails.TargetHostNames, experimentsDetails.ChaosDuration, experimentsDetails.MatchScheme, t.Pids[index])
 	cmd := exec.Command("/bin/bash", "-c", commandTemplate)
 	log.Info(cmd.String())
 	cmd.Stdout = &out
@@ -220,20 +235,26 @@ func injectChaos(experimentsDetails *experimentTypes.ExperimentDetails, t target
 }
 
 func terminateProcess(t targetDetails) error {
-	// kill command
-	killTemplate := fmt.Sprintf("sudo kill %d", t.Cmd.Process.Pid)
-	kill := exec.Command("/bin/bash", "-c", killTemplate)
-	var out bytes.Buffer
-	kill.Stderr = &out
-	kill.Stdout = &out
-	if err = kill.Run(); err != nil {
-		if strings.Contains(strings.ToLower(out.String()), ProcessAlreadyKilled) {
-			return nil
+	var errList []string
+	for i := range t.Cmds {
+		// kill command
+		killTemplate := fmt.Sprintf("sudo kill %d", t.Cmds[i].Process.Pid)
+		kill := exec.Command("/bin/bash", "-c", killTemplate)
+		var out bytes.Buffer
+		kill.Stderr = &out
+		kill.Stdout = &out
+		if err = kill.Run(); err != nil {
+			if strings.Contains(strings.ToLower(out.String()), ProcessAlreadyKilled) {
+				continue
+			}
+			errList = append(errList, cerrors.Error{ErrorCode: cerrors.ErrorTypeChaosRevert, Source: t.Source, Target: fmt.Sprintf("{podName: %s, namespace: %s}", t.Name, t.Namespace), Reason: fmt.Sprintf("failed to revert chaos %s", out.String())}.Error())
+		} else {
+			log.Errorf("dns interceptor process stopped")
+			log.Infof("successfully injected chaos on target: {name: %s, namespace: %v, container: %v}", t.Name, t.Namespace, t.TargetContainers[i])
 		}
-		return cerrors.Error{ErrorCode: cerrors.ErrorTypeChaosRevert, Source: t.Source, Target: fmt.Sprintf("{podName: %s, namespace: %s}", t.Name, t.Namespace), Reason: fmt.Sprintf("failed to revert chaos %s", out.String())}
-	} else {
-		log.Errorf("dns interceptor process stopped")
-		log.Infof("successfully injected chaos on target: {name: %s, namespace: %v, container: %v}", t.Name, t.Namespace, t.TargetContainer)
+	}
+	if len(errList) != 0 {
+		return cerrors.PreserveError{ErrString: fmt.Sprintf("[%s]", strings.Join(errList, ","))}
 	}
 	return nil
 }
@@ -282,12 +303,11 @@ func getENV(experimentDetails *experimentTypes.ExperimentDetails) {
 }
 
 type targetDetails struct {
-	Name            string
-	Namespace       string
-	TargetContainer string
-	ContainerId     string
-	Pid             int
-	CommandPid      int
-	Cmd             *exec.Cmd
-	Source          string
+	Name             string
+	Namespace        string
+	TargetContainers []string
+	ContainerIds     []string
+	Pids             []int
+	Cmds             []*exec.Cmd
+	Source           string
 }

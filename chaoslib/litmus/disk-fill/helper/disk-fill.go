@@ -81,22 +81,29 @@ func diskFill(experimentsDetails *experimentTypes.ExperimentDetails, clients cli
 
 	for _, t := range targetList.Target {
 		td := targetDetails{
-			Name:            t.Name,
-			Namespace:       t.Namespace,
-			TargetContainer: t.TargetContainer,
-			Source:          chaosDetails.ChaosPodName,
+			Name:      t.Name,
+			Namespace: t.Namespace,
+			Source:    chaosDetails.ChaosPodName,
+		}
+
+		td.TargetContainers, err = common.GetTargetContainers(t.Name, t.Namespace, t.TargetContainer, chaosDetails.ChaosPodName, clients)
+		if err != nil {
+			return stacktrace.Propagate(err, "could not get target containers")
 		}
 
 		// Derive the container id of the target container
-		td.ContainerId, err = common.GetContainerID(td.Namespace, td.Name, td.TargetContainer, clients, chaosDetails.ChaosPodName)
+		td.ContainerIds, err = common.GetContainerIDs(td.Namespace, td.Name, td.TargetContainers, clients, chaosDetails.ChaosPodName)
 		if err != nil {
-			return stacktrace.Propagate(err, "could not get container id")
+			return stacktrace.Propagate(err, "could not get container ids")
 		}
 
-		// extract out the pid of the target container
-		td.TargetPID, err = common.GetPID(experimentsDetails.ContainerRuntime, td.ContainerId, experimentsDetails.SocketPath, td.Source)
-		if err != nil {
-			return err
+		for _, cid := range td.ContainerIds {
+			// extract out the pid of the target container
+			pid, err := common.GetPID(experimentsDetails.ContainerRuntime, cid, experimentsDetails.SocketPath, td.Source)
+			if err != nil {
+				return err
+			}
+			td.TargetPIDs = append(td.TargetPIDs, pid)
 		}
 
 		td.SizeToFill, err = getDiskSizeToFill(td, experimentsDetails, clients)
@@ -105,10 +112,10 @@ func diskFill(experimentsDetails *experimentTypes.ExperimentDetails, clients cli
 		}
 
 		log.InfoWithValues("[Info]: Details of application under chaos injection", logrus.Fields{
-			"PodName":         td.Name,
-			"Namespace":       td.Namespace,
-			"SizeToFill(KB)":  td.SizeToFill,
-			"TargetContainer": td.TargetContainer,
+			"PodName":          td.Name,
+			"Namespace":        td.Namespace,
+			"SizeToFill(KB)":   td.SizeToFill,
+			"TargetContainers": td.TargetContainers,
 		})
 
 		targets = append(targets, td)
@@ -132,19 +139,25 @@ func diskFill(experimentsDetails *experimentTypes.ExperimentDetails, clients cli
 	}
 
 	for _, t := range targets {
-		if t.SizeToFill > 0 {
-			if err := fillDisk(t, experimentsDetails.DataBlockSize); err != nil {
-				return stacktrace.Propagate(err, "could not fill ephemeral storage")
-			}
-			log.Infof("successfully injected chaos on target: {name: %s, namespace: %v, container: %v}", t.Name, t.Namespace, t.TargetContainer)
-			if err = result.AnnotateChaosResult(resultDetails.Name, chaosDetails.ChaosNamespace, "injected", "pod", t.Name); err != nil {
-				if revertErr := revertDiskFill(t, clients); revertErr != nil {
-					return cerrors.PreserveError{ErrString: fmt.Sprintf("[%s,%s]", stacktrace.RootCause(err).Error(), stacktrace.RootCause(revertErr).Error())}
+		for i := range t.SizeToFill {
+			if t.SizeToFill[i] > 0 {
+				if err := fillDisk(t, experimentsDetails.DataBlockSize, i); err != nil {
+					if revertErr := revertDiskFill(t, clients); revertErr != nil {
+						log.Errorf("failed to revert chaos: %v", revertErr)
+					}
+					return stacktrace.Propagate(err, "could not fill ephemeral storage")
 				}
-				return stacktrace.Propagate(err, "could not annotate chaosresult")
+				t.Injected[i] = true
+				log.Infof("successfully injected chaos on target: {name: %s, namespace: %v, container: %v}", t.Name, t.Namespace, t.TargetContainers[i])
+			} else {
+				log.Warn("No required free space found!")
 			}
-		} else {
-			log.Warn("No required free space found!")
+		}
+		if err = result.AnnotateChaosResult(resultDetails.Name, chaosDetails.ChaosNamespace, "injected", "pod", t.Name); err != nil {
+			if revertErr := revertDiskFill(t, clients); revertErr != nil {
+				return cerrors.PreserveError{ErrString: fmt.Sprintf("[%s,%s]", stacktrace.RootCause(err).Error(), stacktrace.RootCause(revertErr).Error())}
+			}
+			return stacktrace.Propagate(err, "could not annotate chaosresult")
 		}
 	}
 
@@ -175,37 +188,35 @@ func diskFill(experimentsDetails *experimentTypes.ExperimentDetails, clients cli
 }
 
 // fillDisk fill the ephemeral disk by creating files
-func fillDisk(t targetDetails, bs int) error {
+func fillDisk(t targetDetails, bs int, index int) error {
 
 	// Creating files to fill the required ephemeral storage size of block size of 4K
 	log.Infof("[Fill]: Filling ephemeral storage, size: %vKB", t.SizeToFill)
-	dd := fmt.Sprintf("sudo dd if=/dev/urandom of=/proc/%v/root/home/diskfill bs=%vK count=%v", t.TargetPID, bs, strconv.Itoa(t.SizeToFill/bs))
+	dd := fmt.Sprintf("sudo dd if=/dev/urandom of=/proc/%v/root/home/diskfill bs=%vK count=%v", t.TargetPIDs[index], bs, strconv.Itoa(t.SizeToFill[index]/bs))
 	log.Infof("dd: {%v}", dd)
 	cmd := exec.Command("/bin/bash", "-c", dd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Error(err.Error())
 	}
-	return cerrors.Error{ErrorCode: cerrors.ErrorTypeChaosInject, Source: t.Source, Target: fmt.Sprintf("{podName: %s, namespace: %s, container: %s}", t.Name, t.Namespace, t.TargetContainer), Reason: string(out)}
+	return cerrors.Error{ErrorCode: cerrors.ErrorTypeChaosInject, Source: t.Source, Target: fmt.Sprintf("{podName: %s, namespace: %s, container: %s}", t.Name, t.Namespace, t.TargetContainers[index]), Reason: string(out)}
 }
 
 // getEphemeralStorageAttributes derive the ephemeral storage attributes from the target pod
-func getEphemeralStorageAttributes(t targetDetails, clients clients.ClientSets) (int64, error) {
+func getEphemeralStorageAttributes(t targetDetails, clients clients.ClientSets) ([]int, error) {
 
 	pod, err := clients.KubeClient.CoreV1().Pods(t.Namespace).Get(context.Background(), t.Name, v1.GetOptions{})
 	if err != nil {
-		return 0, cerrors.Error{ErrorCode: cerrors.ErrorTypeHelper, Source: t.Source, Target: fmt.Sprintf("{podName: %s, namespace: %s}", t.Name, t.Namespace), Reason: err.Error()}
+		return nil, cerrors.Error{ErrorCode: cerrors.ErrorTypeHelper, Source: t.Source, Target: fmt.Sprintf("{podName: %s, namespace: %s}", t.Name, t.Namespace), Reason: err.Error()}
 	}
 
-	var ephemeralStorageLimit int64
-	containers := pod.Spec.Containers
+	var ephemeralStorageLimit []int
 
 	// Extracting ephemeral storage limit & requested value from the target container
 	// It will be in the form of Kb
-	for _, container := range containers {
-		if container.Name == t.TargetContainer {
-			ephemeralStorageLimit = container.Resources.Limits.StorageEphemeral().ToDec().ScaledValue(resource.Kilo)
-			break
+	for _, container := range pod.Spec.Containers {
+		if common.Contains(container.Name, t.TargetContainers) {
+			ephemeralStorageLimit = append(ephemeralStorageLimit, int(container.Resources.Limits.StorageEphemeral().ToDec().ScaledValue(resource.Kilo)))
 		}
 	}
 
@@ -226,21 +237,21 @@ func filterUsedEphemeralStorage(ephemeralStorageDetails string) (int, error) {
 }
 
 // getSizeToBeFilled generate the ephemeral storage size need to be filled
-func getSizeToBeFilled(experimentsDetails *experimentTypes.ExperimentDetails, usedEphemeralStorageSize int, ephemeralStorageLimit int) int {
-	var requirementToBeFill int
+func getSizeToBeFilled(experimentsDetails *experimentTypes.ExperimentDetails, usedEphemeralStorageSize, ephemeralStorageLimit []int) []int {
+	var requirementToBeFill []int
 
-	switch ephemeralStorageLimit {
-	case 0:
-		ephemeralStorageMebibytes, _ := strconv.Atoi(experimentsDetails.EphemeralStorageMebibytes)
-		requirementToBeFill = ephemeralStorageMebibytes * 1024
-	default:
-		// deriving size need to be filled from the used size & requirement size to fill
-		fillPercentage, _ := strconv.Atoi(experimentsDetails.FillPercentage)
-		requirementToBeFill = (ephemeralStorageLimit * fillPercentage) / 100
+	for i := range usedEphemeralStorageSize {
+		switch ephemeralStorageLimit[i] {
+		case 0:
+			ephemeralStorageMebibytes, _ := strconv.Atoi(experimentsDetails.EphemeralStorageMebibytes)
+			requirementToBeFill = append(requirementToBeFill, ephemeralStorageMebibytes*1024-usedEphemeralStorageSize[i])
+		default:
+			// deriving size need to be filled from the used size & requirement size to fill
+			fillPercentage, _ := strconv.Atoi(experimentsDetails.FillPercentage)
+			requirementToBeFill = append(requirementToBeFill, (ephemeralStorageLimit[i]*fillPercentage)/100-usedEphemeralStorageSize[i])
+		}
 	}
-
-	needToBeFilled := requirementToBeFill - usedEphemeralStorageSize
-	return needToBeFilled
+	return requirementToBeFill
 }
 
 // revertDiskFill will delete the target pod if target pod is evicted
@@ -258,16 +269,31 @@ func revertDiskFill(t targetDetails, clients clients.ClientSets) error {
 			return cerrors.Error{ErrorCode: cerrors.ErrorTypeChaosRevert, Source: t.Source, Target: fmt.Sprintf("{podName: %s,namespace: %s}", t.Name, t.Namespace), Reason: fmt.Sprintf("failed to delete target pod after eviction :%s", err.Error())}
 		}
 	} else {
-		// deleting the files after chaos execution
-		rm := fmt.Sprintf("sudo rm -rf /proc/%v/root/home/diskfill", t.TargetPID)
-		cmd := exec.Command("/bin/bash", "-c", rm)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			log.Error(err.Error())
-			return cerrors.Error{ErrorCode: cerrors.ErrorTypeChaosRevert, Source: t.Source, Target: fmt.Sprintf("{podName: %s,namespace: %s}", t.Name, t.Namespace), Reason: fmt.Sprintf("failed to cleanup ephemeral storage: %s", string(out))}
+		var errList []string
+		for i := range t.TargetPIDs {
+			if !t.Injected[i] {
+				continue
+			}
+			// deleting the files after chaos execution
+			rm := fmt.Sprintf("sudo rm -rf /proc/%v/root/home/diskfill", t.TargetPIDs[i])
+			cmd := exec.Command("/bin/bash", "-c", rm)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				log.Error(err.Error())
+				errList = append(errList, cerrors.Error{
+					ErrorCode: cerrors.ErrorTypeChaosRevert,
+					Source:    t.Source,
+					Target:    fmt.Sprintf("{podName: %s,namespace: %s, container: %s}", t.Name, t.Namespace, t.TargetContainers[i]),
+					Reason:    fmt.Sprintf("failed to cleanup ephemeral storage: %s", string(out)),
+				}.Error())
+				continue
+			}
+			log.Infof("successfully reverted chaos on target: {name: %s, namespace: %v, container: %v}", t.Name, t.Namespace, t.TargetContainers[i])
+		}
+		if len(errList) != 0 {
+			return cerrors.PreserveError{ErrString: fmt.Sprintf("[%s]", strings.Join(errList, ","))}
 		}
 	}
-	log.Infof("successfully reverted chaos on target: {name: %s, namespace: %v, container: %v}", t.Name, t.Namespace, t.TargetContainer)
 	return nil
 }
 
@@ -314,55 +340,65 @@ func abortWatcher(targets []targetDetails, experimentsDetails *experimentTypes.E
 	os.Exit(1)
 }
 
-func getDiskSizeToFill(t targetDetails, experimentsDetails *experimentTypes.ExperimentDetails, clients clients.ClientSets) (int, error) {
+func getDiskSizeToFill(t targetDetails, experimentsDetails *experimentTypes.ExperimentDetails, clients clients.ClientSets) ([]int, error) {
 
 	usedEphemeralStorageSize, err := getUsedEphemeralStorage(t)
 	if err != nil {
-		return 0, stacktrace.Propagate(err, "could not get used ephemeral storage")
+		return nil, stacktrace.Propagate(err, "could not get used ephemeral storage")
 	}
 
 	// GetEphemeralStorageAttributes derive the ephemeral storage attributes from the target container
 	ephemeralStorageLimit, err := getEphemeralStorageAttributes(t, clients)
 	if err != nil {
-		return 0, stacktrace.Propagate(err, "could not get ephemeral storage attributes")
+		return nil, stacktrace.Propagate(err, "could not get ephemeral storage attributes")
 	}
 
-	if ephemeralStorageLimit == 0 && experimentsDetails.EphemeralStorageMebibytes == "0" {
-		return 0, cerrors.Error{ErrorCode: cerrors.ErrorTypeHelper, Source: t.Source, Target: fmt.Sprintf("{podName: %s, namespace: %s}", t.Name, t.Namespace), Reason: "either provide ephemeral storage limit inside target container or define EPHEMERAL_STORAGE_MEBIBYTES ENV"}
+	if len(ephemeralStorageLimit) != len(t.TargetContainers) && experimentsDetails.EphemeralStorageMebibytes == "0" {
+		return nil, cerrors.Error{
+			ErrorCode: cerrors.ErrorTypeHelper,
+			Source:    t.Source,
+			Target:    fmt.Sprintf("{podName: %s, namespace: %s}", t.Name, t.Namespace),
+			Reason:    "either provide ephemeral storage limit inside target container or define EPHEMERAL_STORAGE_MEBIBYTES ENV",
+		}
 	}
 
 	// deriving the ephemeral storage size to be filled
-	sizeTobeFilled := getSizeToBeFilled(experimentsDetails, usedEphemeralStorageSize, int(ephemeralStorageLimit))
+	sizeTobeFilled := getSizeToBeFilled(experimentsDetails, usedEphemeralStorageSize, ephemeralStorageLimit)
 
 	return sizeTobeFilled, nil
 }
 
-func getUsedEphemeralStorage(t targetDetails) (int, error) {
-	// derive the used ephemeral storage size from the target container
-	du := fmt.Sprintf("sudo du /proc/%v/root", t.TargetPID)
-	cmd := exec.Command("/bin/bash", "-c", du)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		log.Error(err.Error())
-		return 0, cerrors.Error{ErrorCode: cerrors.ErrorTypeHelper, Source: t.Source, Target: fmt.Sprintf("{podName: %s, namespace: %s, container: %s}", t.Name, t.Namespace, t.TargetContainer), Reason: fmt.Sprintf("failed to get used ephemeral storage size: %s", string(out))}
-	}
-	ephemeralStorageDetails := string(out)
+func getUsedEphemeralStorage(t targetDetails) ([]int, error) {
+	var usedEphemeralStorageSize []int
+	for i := range t.TargetPIDs {
+		// derive the used ephemeral storage size from the target container
+		du := fmt.Sprintf("sudo du /proc/%v/root", t.TargetPIDs[i])
+		cmd := exec.Command("/bin/bash", "-c", du)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Error(err.Error())
+			return nil, cerrors.Error{ErrorCode: cerrors.ErrorTypeHelper, Source: t.Source, Target: fmt.Sprintf("{podName: %s, namespace: %s, container: %s}", t.Name, t.Namespace, t.TargetContainers[i]), Reason: fmt.Sprintf("failed to get used ephemeral storage size: %s", string(out))}
+		}
+		ephemeralStorageDetails := string(out)
 
-	// filtering out the used ephemeral storage from the output of du command
-	usedEphemeralStorageSize, err := filterUsedEphemeralStorage(ephemeralStorageDetails)
-	if err != nil {
-		return 0, cerrors.Error{ErrorCode: cerrors.ErrorTypeHelper, Source: t.Source, Target: fmt.Sprintf("{podName: %s, namespace: %s, container: %s}", t.Name, t.Namespace, t.TargetContainer), Reason: fmt.Sprintf("failed to get used ephemeral storage size: %s", err.Error())}
+		// filtering out the used ephemeral storage from the output of du command
+		usedSize, err := filterUsedEphemeralStorage(ephemeralStorageDetails)
+		if err != nil {
+			return nil, cerrors.Error{ErrorCode: cerrors.ErrorTypeHelper, Source: t.Source, Target: fmt.Sprintf("{podName: %s, namespace: %s, container: %s}", t.Name, t.Namespace, t.TargetContainers[i]), Reason: fmt.Sprintf("failed to get used ephemeral storage size: %s", err.Error())}
+		}
+		log.Infof("used ephemeral storage space: %vKB for %v container", strconv.Itoa(usedSize), t.TargetContainers[i])
+		usedEphemeralStorageSize = append(usedEphemeralStorageSize, usedSize)
 	}
-	log.Infof("used ephemeral storage space: %vKB", strconv.Itoa(usedEphemeralStorageSize))
 	return usedEphemeralStorageSize, nil
 }
 
 type targetDetails struct {
-	Name            string
-	Namespace       string
-	TargetContainer string
-	ContainerId     string
-	SizeToFill      int
-	TargetPID       int
-	Source          string
+	Name             string
+	Namespace        string
+	TargetContainers []string
+	ContainerIds     []string
+	SizeToFill       []int
+	TargetPIDs       []int
+	Source           string
+	Injected         []bool
 }

@@ -364,6 +364,33 @@ func GetExperimentPod(name, namespace string, clients clients.ClientSets) (*core
 	return pod, nil
 }
 
+//GetContainerIDs  derive the container id of the application containers
+func GetContainerIDs(appNamespace, targetPod string, targetContainers []string, clients clients.ClientSets, source string) ([]string, error) {
+
+	pod, err := clients.KubeClient.CoreV1().Pods(appNamespace).Get(context.Background(), targetPod, v1.GetOptions{})
+	if err != nil {
+		return nil, cerrors.Error{ErrorCode: cerrors.ErrorTypeHelper, Source: source, Target: fmt.Sprintf("{podName: %s, namespace: %s}", targetPod, appNamespace), Reason: err.Error()}
+	}
+
+	var containerIDs []string
+
+	// filtering out the container id from the details of containers inside containerStatuses of the given pod
+	// container id is present in the form of <runtime>://<container-id>
+	for _, container := range pod.Status.ContainerStatuses {
+		if Contains(container.Name, targetContainers) {
+			containerIDs = append(containerIDs, strings.Split(container.ContainerID, "//")[1])
+		}
+	}
+	if len(targetContainers) != len(containerIDs) {
+		return nil, cerrors.Error{
+			ErrorCode: cerrors.ErrorTypeContainerRuntime,
+			Source:    source,
+			Target:    fmt.Sprintf("{podName: %s, namespace: %s, container: %s}", targetPod, appNamespace, targetContainers),
+			Reason:    fmt.Sprintf("failed to get the container id of %v containers", targetContainers)}
+	}
+	return containerIDs, nil
+}
+
 //GetContainerID  derive the container id of the application container
 func GetContainerID(appNamespace, targetPod, targetContainer string, clients clients.ClientSets, source string) (string, error) {
 
@@ -605,4 +632,36 @@ func GetAppDetailsForLogging(appDetails []types.AppDetails) string {
 		return fmt.Sprintf("[%v]", strings.Join(result, ","))
 	}
 	return ""
+}
+
+func isAllContainers(container string) bool {
+	if strings.ToLower(container) == "all" {
+		return true
+	}
+	return false
+}
+
+func GetTargetContainers(name, namespace, container, source string, clients clients.ClientSets) ([]string, error) {
+	var containerList []string
+	containers := strings.Split(container, ",")
+
+	pod, err := clients.KubeClient.CoreV1().Pods(namespace).Get(context.Background(), name, v1.GetOptions{})
+	if err != nil {
+		return nil, cerrors.Error{ErrorCode: cerrors.ErrorTypeHelper, Source: source, Target: fmt.Sprintf("{podName: %s, namespace: %s}", name, namespace), Reason: err.Error()}
+	}
+
+	for _, c := range pod.Spec.Containers {
+		if Contains(c.Name, containers) || isAllContainers(container) {
+			containerList = append(containerList, c.Name)
+		}
+	}
+
+	if !isAllContainers(container) && len(containers) != len(containerList) {
+		return nil, cerrors.Error{
+			ErrorCode: cerrors.ErrorTypeHelper,
+			Source:    source,
+			Target:    fmt.Sprintf("{podName: %s, namespace: %s}", name, namespace),
+			Reason:    fmt.Sprintf("target pod doesn't contains all the target containers: '%v'", container)}
+	}
+	return containerList, nil
 }

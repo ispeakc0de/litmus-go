@@ -80,21 +80,31 @@ func prepareK8sHttpChaos(experimentsDetails *experimentTypes.ExperimentDetails, 
 
 	for _, t := range targetList.Target {
 		td := targetDetails{
-			Name:            t.Name,
-			Namespace:       t.Namespace,
-			TargetContainer: t.TargetContainer,
-			Source:          chaosDetails.ChaosPodName,
+			Name:      t.Name,
+			Namespace: t.Namespace,
+			Source:    chaosDetails.ChaosPodName,
 		}
 
-		td.ContainerId, err = common.GetRuntimeBasedContainerID(experimentsDetails.ContainerRuntime, experimentsDetails.SocketPath, td.Name, td.Namespace, td.TargetContainer, clients, td.Source)
+		td.TargetContainers, err = common.GetTargetContainers(t.Name, t.Namespace, t.TargetContainer, chaosDetails.ChaosPodName, clients)
 		if err != nil {
-			return stacktrace.Propagate(err, "could not get container id")
+			return stacktrace.Propagate(err, "could not get target containers")
 		}
 
-		// extract out the pid of the target container
-		td.Pid, err = common.GetPauseAndSandboxPID(experimentsDetails.ContainerRuntime, td.ContainerId, experimentsDetails.SocketPath, td.Source)
-		if err != nil {
-			return stacktrace.Propagate(err, "could not get container pid")
+		for _, c := range td.TargetContainers {
+			cid, err := common.GetRuntimeBasedContainerID(experimentsDetails.ContainerRuntime, experimentsDetails.SocketPath, td.Name, td.Namespace, c, clients, td.Source)
+			if err != nil {
+				return stacktrace.Propagate(err, "could not get container id")
+			}
+			td.ContainerIds = append(td.ContainerIds, cid)
+		}
+
+		for _, cid := range td.ContainerIds {
+			// extract out the pid of the target container
+			pid, err := common.GetPauseAndSandboxPID(experimentsDetails.ContainerRuntime, cid, experimentsDetails.SocketPath, td.Source)
+			if err != nil {
+				return stacktrace.Propagate(err, "could not get container pid")
+			}
+			td.Pids = append(td.Pids, pid)
 		}
 		targets = append(targets, td)
 	}
@@ -110,11 +120,17 @@ func prepareK8sHttpChaos(experimentsDetails *experimentTypes.ExperimentDetails, 
 	}
 
 	for _, t := range targets {
-		// injecting http chaos inside target container
-		if err = injectChaos(experimentsDetails, t); err != nil {
-			return stacktrace.Propagate(err, "could not inject chaos")
+		for i := range t.Pids {
+			// injecting http chaos inside target container
+			if err = injectChaos(experimentsDetails, t, i); err != nil {
+				if revertErr := revertChaos(experimentsDetails, t); revertErr != nil {
+					log.Errorf("failed to revert chaos: %v", revertErr)
+				}
+				return stacktrace.Propagate(err, "could not inject chaos")
+			}
+			t.Injected[i] = true
+			log.Infof("successfully injected chaos on target: {name: %s, namespace: %v, container: %v}", t.Name, t.Namespace, t.TargetContainers[i])
 		}
-		log.Infof("successfully injected chaos on target: {name: %s, namespace: %v, container: %v}", t.Name, t.Namespace, t.TargetContainer)
 		if err = result.AnnotateChaosResult(resultDetails.Name, chaosDetails.ChaosNamespace, "injected", "pod", t.Name); err != nil {
 			if revertErr := revertChaos(experimentsDetails, t); revertErr != nil {
 				return cerrors.PreserveError{ErrString: fmt.Sprintf("[%s,%s]", stacktrace.RootCause(err).Error(), stacktrace.RootCause(revertErr).Error())}
@@ -156,16 +172,16 @@ func prepareK8sHttpChaos(experimentsDetails *experimentTypes.ExperimentDetails, 
 }
 
 // injectChaos inject the http chaos in target container and add ruleset to the iptables to redirect the ports
-func injectChaos(experimentDetails *experimentTypes.ExperimentDetails, t targetDetails) error {
-	if err := startProxy(experimentDetails, t.Pid); err != nil {
-		killErr := killProxy(t.Pid, t.Source)
+func injectChaos(experimentDetails *experimentTypes.ExperimentDetails, t targetDetails, index int) error {
+	if err := startProxy(experimentDetails, t.Pids[index]); err != nil {
+		killErr := killProxy(t.Pids[index], t.Source)
 		if killErr != nil {
 			return cerrors.PreserveError{ErrString: fmt.Sprintf("[%s,%s]", stacktrace.RootCause(err).Error(), stacktrace.RootCause(killErr).Error())}
 		}
 		return stacktrace.Propagate(err, "could not start proxy server")
 	}
-	if err := addIPRuleSet(experimentDetails, t.Pid); err != nil {
-		killErr := killProxy(t.Pid, t.Source)
+	if err := addIPRuleSet(experimentDetails, t.Pids[index]); err != nil {
+		killErr := killProxy(t.Pids[index], t.Source)
 		if killErr != nil {
 			return cerrors.PreserveError{ErrString: fmt.Sprintf("[%s,%s]", stacktrace.RootCause(err).Error(), stacktrace.RootCause(killErr).Error())}
 		}
@@ -179,17 +195,22 @@ func revertChaos(experimentDetails *experimentTypes.ExperimentDetails, t targetD
 
 	var errList []string
 
-	if err := removeIPRuleSet(experimentDetails, t.Pid); err != nil {
-		errList = append(errList, err.Error())
-	}
+	for i := range t.Pids {
+		if !t.Injected[i] {
+			continue
+		}
+		if err := removeIPRuleSet(experimentDetails, t.Pids[i]); err != nil {
+			errList = append(errList, err.Error())
+		}
 
-	if err := killProxy(t.Pid, t.Source); err != nil {
-		errList = append(errList, err.Error())
+		if err := killProxy(t.Pids[i], t.Source); err != nil {
+			errList = append(errList, err.Error())
+		}
+		log.Infof("successfully reverted chaos on target: {name: %s, namespace: %v, container: %v}", t.Name, t.Namespace, t.TargetContainers[i])
 	}
 	if len(errList) != 0 {
 		return cerrors.PreserveError{ErrString: fmt.Sprintf("[%s]", strings.Join(errList, ","))}
 	}
-	log.Infof("successfully reverted chaos on target: {name: %s, namespace: %v, container: %v}", t.Name, t.Namespace, t.TargetContainer)
 	return nil
 }
 
@@ -318,10 +339,11 @@ func abortWatcher(targets []targetDetails, resultName, chaosNS string, experimen
 }
 
 type targetDetails struct {
-	Name            string
-	Namespace       string
-	TargetContainer string
-	ContainerId     string
-	Pid             int
-	Source          string
+	Name             string
+	Namespace        string
+	TargetContainers []string
+	ContainerIds     []string
+	Pids             []int
+	Source           string
+	Injected         []bool
 }

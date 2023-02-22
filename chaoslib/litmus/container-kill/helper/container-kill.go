@@ -66,10 +66,13 @@ func killContainer(experimentsDetails *experimentTypes.ExperimentDetails, client
 
 	for _, t := range targetList.Target {
 		td := targetDetails{
-			Name:            t.Name,
-			Namespace:       t.Namespace,
-			TargetContainer: t.TargetContainer,
-			Source:          chaosDetails.ChaosPodName,
+			Name:      t.Name,
+			Namespace: t.Namespace,
+			Source:    chaosDetails.ChaosPodName,
+		}
+		td.TargetContainers, err = common.GetTargetContainers(t.Name, t.Namespace, t.TargetContainer, chaosDetails.ChaosPodName, clients)
+		if err != nil {
+			return stacktrace.Propagate(err, "could not get target containers")
 		}
 		targets = append(targets, td)
 		log.Infof("Injecting chaos on target: {name: %s, namespace: %v, container: %v}", t.Name, t.Namespace, t.TargetContainer)
@@ -99,18 +102,18 @@ func killIterations(targets []targetDetails, experimentsDetails *experimentTypes
 				return stacktrace.Propagate(err, "could get container restart count")
 			}
 
-			containerId, err := common.GetContainerID(t.Namespace, t.Name, t.TargetContainer, clients, t.Source)
+			cIds, err := common.GetContainerIDs(t.Namespace, t.Name, t.TargetContainers, clients, t.Source)
 			if err != nil {
 				return stacktrace.Propagate(err, "could not get container id")
 			}
 
 			log.InfoWithValues("[Info]: Details of application under chaos injection", logrus.Fields{
 				"PodName":            t.Name,
-				"ContainerName":      t.TargetContainer,
+				"ContainerName":      t.TargetContainers,
 				"RestartCountBefore": t.RestartCountBefore,
 			})
 
-			containerIds = append(containerIds, containerId)
+			containerIds = append(containerIds, cIds...)
 		}
 
 		if err := kill(experimentsDetails, containerIds, clients, eventsDetails, chaosDetails); err != nil {
@@ -168,7 +171,7 @@ func validate(t targetDetails, timeout, delay int, clients clients.ClientSets) e
 	}
 
 	// It will verify that the restart count of container should increase after chaos injection
-	return verifyRestartCount(t, timeout, delay, clients, t.RestartCountBefore)
+	return verifyRestartCount(t, timeout, delay, clients)
 }
 
 //stopContainerdContainer kill the application container
@@ -206,25 +209,24 @@ func stopDockerContainer(containerIDs []string, socketPath, signal, source strin
 }
 
 //getRestartCount return the restart count of target container
-func getRestartCount(target targetDetails, clients clients.ClientSets) (int, error) {
+func getRestartCount(target targetDetails, clients clients.ClientSets) ([]int, error) {
 	pod, err := clients.KubeClient.CoreV1().Pods(target.Namespace).Get(context.Background(), target.Name, v1.GetOptions{})
 	if err != nil {
-		return 0, cerrors.Error{ErrorCode: cerrors.ErrorTypeHelper, Source: target.Source, Target: fmt.Sprintf("{podName: %s, namespace: %s}", target.Name, target.Namespace), Reason: err.Error()}
+		return nil, cerrors.Error{ErrorCode: cerrors.ErrorTypeHelper, Source: target.Source, Target: fmt.Sprintf("{podName: %s, namespace: %s}", target.Name, target.Namespace), Reason: err.Error()}
 	}
-	restartCount := 0
+	var restartCounts []int
+
 	for _, container := range pod.Status.ContainerStatuses {
-		if container.Name == target.TargetContainer {
-			restartCount = int(container.RestartCount)
-			break
+		if common.Contains(container.Name, target.TargetContainers) {
+			restartCounts = append(restartCounts, int(container.RestartCount))
 		}
 	}
-	return restartCount, nil
+	return restartCounts, nil
 }
 
 //verifyRestartCount verify the restart count of target container that it is restarted or not after chaos injection
-func verifyRestartCount(t targetDetails, timeout, delay int, clients clients.ClientSets, restartCountBefore int) error {
+func verifyRestartCount(t targetDetails, timeout, delay int, clients clients.ClientSets) error {
 
-	restartCountAfter := 0
 	return retry.
 		Times(uint(timeout / delay)).
 		Wait(time.Duration(delay) * time.Second).
@@ -233,16 +235,24 @@ func verifyRestartCount(t targetDetails, timeout, delay int, clients clients.Cli
 			if err != nil {
 				return cerrors.Error{ErrorCode: cerrors.ErrorTypeHelper, Source: t.Source, Target: fmt.Sprintf("{podName: %s, namespace: %s}", t.Name, t.Namespace), Reason: err.Error()}
 			}
+			var restartCountAfter []int
 			for _, container := range pod.Status.ContainerStatuses {
-				if container.Name == t.TargetContainer {
-					restartCountAfter = int(container.RestartCount)
-					break
+				if common.Contains(container.Name, t.TargetContainers) {
+					restartCountAfter = append(restartCountAfter, int(container.RestartCount))
 				}
 			}
-			if restartCountAfter <= restartCountBefore {
-				return cerrors.Error{ErrorCode: cerrors.ErrorTypeHelper, Source: t.Source, Target: fmt.Sprintf("{podName: %s, namespace: %s, container: %s}", t.Name, t.Namespace, t.TargetContainer), Reason: "target container is not restarted after kill"}
+			for i := range restartCountAfter {
+				if restartCountAfter[i] <= t.RestartCountBefore[i] {
+					return cerrors.Error{
+						ErrorCode: cerrors.ErrorTypeHelper,
+						Source:    t.Source,
+						Target:    fmt.Sprintf("{podName: %s, namespace: %s, container: %s}", t.Name, t.Namespace, t.TargetContainers[i]),
+						Reason:    "target container is not restarted after kill",
+					}
+				}
+				log.Infof("restartCount of target container after chaos injection: %v", strconv.Itoa(restartCountAfter[i]))
 			}
-			log.Infof("restartCount of target container after chaos injection: %v", strconv.Itoa(restartCountAfter))
+
 			return nil
 		})
 }
@@ -267,7 +277,7 @@ func getENV(experimentDetails *experimentTypes.ExperimentDetails) {
 type targetDetails struct {
 	Name               string
 	Namespace          string
-	TargetContainer    string
-	RestartCountBefore int
+	TargetContainers   []string
+	RestartCountBefore []int
 	Source             string
 }
