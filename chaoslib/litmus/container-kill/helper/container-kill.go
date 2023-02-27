@@ -62,10 +62,10 @@ func killContainer(experimentsDetails *experimentTypes.ExperimentDetails, client
 		return stacktrace.Propagate(err, "could not parse targets")
 	}
 
-	var targets []targetDetails
+	var targets []*targetDetails
 
 	for _, t := range targetList.Target {
-		td := targetDetails{
+		td := &targetDetails{
 			Name:      t.Name,
 			Namespace: t.Namespace,
 			Source:    chaosDetails.ChaosPodName,
@@ -86,7 +86,7 @@ func killContainer(experimentsDetails *experimentTypes.ExperimentDetails, client
 	return nil
 }
 
-func killIterations(targets []targetDetails, experimentsDetails *experimentTypes.ExperimentDetails, clients clients.ClientSets, eventsDetails *types.EventDetails, chaosDetails *types.ChaosDetails, resultDetails *types.ResultDetails) error {
+func killIterations(targets []*targetDetails, experimentsDetails *experimentTypes.ExperimentDetails, clients clients.ClientSets, eventsDetails *types.EventDetails, chaosDetails *types.ChaosDetails, resultDetails *types.ResultDetails) error {
 
 	//ChaosStartTimeStamp contains the start timestamp, when the chaos injection begin
 	ChaosStartTimeStamp := time.Now()
@@ -164,7 +164,7 @@ func kill(experimentsDetails *experimentTypes.ExperimentDetails, containerIds []
 	return nil
 }
 
-func validate(t targetDetails, timeout, delay int, clients clients.ClientSets) error {
+func validate(t *targetDetails, timeout, delay int, clients clients.ClientSets) error {
 	//Check the status of restarted container
 	if err := common.CheckContainerStatus(t.Namespace, t.Name, timeout, delay, clients, t.Source); err != nil {
 		return err
@@ -209,7 +209,7 @@ func stopDockerContainer(containerIDs []string, socketPath, signal, source strin
 }
 
 //getRestartCount return the restart count of target container
-func getRestartCount(target targetDetails, clients clients.ClientSets) ([]int, error) {
+func getRestartCount(target *targetDetails, clients clients.ClientSets) ([]int, error) {
 	pod, err := clients.KubeClient.CoreV1().Pods(target.Namespace).Get(context.Background(), target.Name, v1.GetOptions{})
 	if err != nil {
 		return nil, cerrors.Error{ErrorCode: cerrors.ErrorTypeHelper, Source: target.Source, Target: fmt.Sprintf("{podName: %s, namespace: %s}", target.Name, target.Namespace), Reason: err.Error()}
@@ -225,7 +225,7 @@ func getRestartCount(target targetDetails, clients clients.ClientSets) ([]int, e
 }
 
 //verifyRestartCount verify the restart count of target container that it is restarted or not after chaos injection
-func verifyRestartCount(t targetDetails, timeout, delay int, clients clients.ClientSets) error {
+func verifyRestartCount(t *targetDetails, timeout, delay int, clients clients.ClientSets) error {
 
 	return retry.
 		Times(uint(timeout / delay)).
@@ -241,7 +241,9 @@ func verifyRestartCount(t targetDetails, timeout, delay int, clients clients.Cli
 					restartCountAfter = append(restartCountAfter, int(container.RestartCount))
 				}
 			}
+			log.Infof("rsbefore: %v, rsafter: %v", t.RestartCountBefore, restartCountAfter)
 			for i := range restartCountAfter {
+				log.Infof("rsbefore: %v, rsafter: %v - inside", t.RestartCountBefore, restartCountAfter)
 				if restartCountAfter[i] <= t.RestartCountBefore[i] {
 					return cerrors.Error{
 						ErrorCode: cerrors.ErrorTypeHelper,

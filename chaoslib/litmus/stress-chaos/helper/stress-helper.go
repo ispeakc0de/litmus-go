@@ -105,10 +105,10 @@ func prepareStressChaos(experimentsDetails *experimentTypes.ExperimentDetails, c
 		return stacktrace.Propagate(err, "could not parse targets")
 	}
 
-	var targets []targetDetails
+	var targets []*targetDetails
 
 	for _, t := range targetList.Target {
-		td := targetDetails{
+		td := &targetDetails{
 			Name:      t.Name,
 			Namespace: t.Namespace,
 			Source:    chaosDetails.ChaosPodName,
@@ -262,7 +262,7 @@ func prepareStressChaos(experimentsDetails *experimentTypes.ExperimentDetails, c
 }
 
 //terminateProcess will remove the stress process from the target container after chaos completion
-func terminateProcess(t targetDetails) error {
+func terminateProcess(t *targetDetails) error {
 	var errList []string
 	for i := range t.Cmds {
 		if err := syscall.Kill(-t.Cmds[i].Process.Pid, syscall.SIGKILL); err != nil {
@@ -349,7 +349,7 @@ func prepareStressor(experimentDetails *experimentTypes.ExperimentDetails) []str
 }
 
 //pidPath will get the pid path of the container
-func pidPath(t targetDetails, index int) cgroups.Path {
+func pidPath(t *targetDetails, index int) cgroups.Path {
 	processPath := "/proc/" + strconv.Itoa(t.Pids[index]) + "/cgroup"
 	paths, err := parseCgroupFile(processPath, t, index)
 	if err != nil {
@@ -359,7 +359,7 @@ func pidPath(t targetDetails, index int) cgroups.Path {
 }
 
 //parseCgroupFile will read and verify the cgroup file entry of a container
-func parseCgroupFile(path string, t targetDetails, index int) (map[string]string, error) {
+func parseCgroupFile(path string, t *targetDetails, index int) (map[string]string, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, cerrors.Error{ErrorCode: cerrors.ErrorTypeHelper, Source: t.Source, Target: fmt.Sprintf("{podName: %s, namespace: %s, container: %s}", t.Name, t.Namespace, t.TargetContainers[index]), Reason: fmt.Sprintf("fail to parse cgroup: %s", err.Error())}
@@ -369,7 +369,7 @@ func parseCgroupFile(path string, t targetDetails, index int) (map[string]string
 }
 
 //parseCgroupFromReader will parse the cgroup file from the reader
-func parseCgroupFromReader(r io.Reader, t targetDetails, index int) (map[string]string, error) {
+func parseCgroupFromReader(r io.Reader, t *targetDetails, index int) (map[string]string, error) {
 	var (
 		cgroups = make(map[string]string)
 		s       = bufio.NewScanner(r)
@@ -456,7 +456,7 @@ func getCgroupDestination(pid int, subsystem string) (string, error) {
 }
 
 //findValidCgroup will be used to get a valid cgroup path
-func findValidCgroup(path cgroups.Path, t targetDetails, index int) (string, error) {
+func findValidCgroup(path cgroups.Path, t *targetDetails, index int) (string, error) {
 	for _, subsystem := range cgroupSubsystemList {
 		path, err := path(cgroups.Name(subsystem))
 		if err != nil {
@@ -492,7 +492,7 @@ func getENV(experimentDetails *experimentTypes.ExperimentDetails) {
 }
 
 // abortWatcher continuously watch for the abort signals
-func abortWatcher(targets []targetDetails, resultName, chaosNS string) {
+func abortWatcher(targets []*targetDetails, resultName, chaosNS string) {
 
 	<-abort
 
@@ -518,7 +518,7 @@ func abortWatcher(targets []targetDetails, resultName, chaosNS string) {
 }
 
 // getCGroupManager will return the cgroup for the given pid of the process
-func getCGroupManager(t targetDetails, index int) (interface{}, error) {
+func getCGroupManager(t *targetDetails, index int) (interface{}, error) {
 	if cgroups.Mode() == cgroups.Unified {
 		groupPath, err := cgroupsv2.PidGroupPath(t.Pids[index])
 		if err != nil {
@@ -555,7 +555,7 @@ func addProcessToCgroup(pid int, control interface{}) error {
 	return cgroup1.Add(cgroups.Process{Pid: pid})
 }
 
-func injectChaos(t targetDetails, stressors string, index int) (*exec.Cmd, error) {
+func injectChaos(t *targetDetails, stressors string, index int) (*exec.Cmd, error) {
 	stressCommand := "pause nsutil -t " + strconv.Itoa(t.Pids[index]) + " -p -- " + stressors
 	log.Infof("[Info]: starting process: %v", stressCommand)
 
