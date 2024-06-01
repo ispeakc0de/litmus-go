@@ -13,7 +13,7 @@ jobs:
       # Install golang
       - uses: actions/setup-go@v2
         with:
-          go-version: 1.18
+          go-version: 1.22
       - uses: actions/checkout@v2
 
       #TODO: Add Dockerfile linting
@@ -31,9 +31,9 @@ jobs:
            gofmt -s -l .
            exit 1
           fi
-          
+
       - name: golangci-lint
-        uses: reviewdog/action-golangci-lint@v1       
+        uses: reviewdog/action-golangci-lint@v1
 
   push:
     needs: pre-checks
@@ -43,7 +43,7 @@ jobs:
       # Install golang
       - uses: actions/setup-go@v2
         with:
-          go-version: 1.18
+          go-version: 1.22
       - uses: actions/checkout@v2
 
       - name: Set up QEMU

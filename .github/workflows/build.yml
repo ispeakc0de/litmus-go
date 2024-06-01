@@ -12,7 +12,7 @@ jobs:
       # Install golang
       - uses: actions/setup-go@v2
         with:
-          go-version: 1.18
+          go-version: 1.22
 
       - uses: actions/checkout@v2
         with:
@@ -33,7 +33,7 @@ jobs:
            gofmt -s -l .
            exit 1
           fi
-          
+
       - name: golangci-lint
         uses: reviewdog/action-golangci-lint@v1
 
@@ -56,7 +56,7 @@ jobs:
       # Install golang
       - uses: actions/setup-go@v2
         with:
-          go-version: 1.18
+          go-version: 1.22
 
       - uses: actions/checkout@v2
         with:
@@ -92,7 +92,7 @@ jobs:
       - name: Build an image from Dockerfile
         run: |
           docker build -f build/Dockerfile -t docker.io/litmuschaos/go-runner:${{ github.sha }} . --build-arg TARGETARCH=amd64
-      
+
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:

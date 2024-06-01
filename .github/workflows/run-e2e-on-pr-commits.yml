@@ -13,16 +13,16 @@ jobs:
   Pod_Level_In_Serial_Mode:
     runs-on: ubuntu-latest
     steps:
-    
+
       # Install golang
       - uses: actions/setup-go@v5
         with:
-          go-version: 1.18
-          
+          go-version: 1.22
+
       - uses: actions/checkout@v2
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          
+
       - name: Generating Go binary and Building docker image
         run: |
           make build-amd64
@@ -52,7 +52,7 @@ jobs:
         with:
           repository: 'litmuschaos/litmus-e2e'
           ref: 'master'
-                   
+
       - name: Running Pod level experiment with affected percentage 100 and in series mode
         env:
           GO_EXPERIMENT_IMAGE: litmuschaos/go-runner:ci
@@ -69,17 +69,17 @@ jobs:
 
   Pod_Level_In_Parallel_Mode:
     runs-on: ubuntu-latest
-    steps:    
-    
+    steps:
+
       # Install golang
       - uses: actions/setup-go@v5
         with:
-          go-version: 1.18
-          
+          go-version: 1.22
+
       - uses: actions/checkout@v2
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          
+
       - name: Generating Go binary and Building docker image
         run: |
           make build-amd64
@@ -111,7 +111,7 @@ jobs:
         with:
           repository: 'litmuschaos/litmus-e2e'
           ref: 'master'
-          
+
       - name: Running Pod level experiment with affected percentage 100 and in parallel mode
         env:
           GO_EXPERIMENT_IMAGE: litmuschaos/go-runner:ci
@@ -128,17 +128,17 @@ jobs:
 
   Node_Level_Tests:
     runs-on: ubuntu-latest
-    steps:    
-    
+    steps:
+
       # Install golang
       - uses: actions/setup-go@v5
         with:
-          go-version: 1.18
-          
+          go-version: 1.22
+
       - uses: actions/checkout@v2
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          
+
       - name: Generating Go binary and Building docker image
         run: |
           make build-amd64
@@ -168,29 +168,29 @@ jobs:
         with:
           repository: 'litmuschaos/litmus-e2e'
           ref: 'master'
-          
+
       - name: Setup litmus and deploy application
         env:
           KUBECONFIG: /home/runner/.kube/config
         run: |
           make build-litmus
           make app-deploy
-          
+
       - name: Running Node Drain experiments
         env:
-          GO_EXPERIMENT_IMAGE: litmuschaos/go-runner:ci        
-          EXPERIMENT_IMAGE_PULL_POLICY: IfNotPresent        
+          GO_EXPERIMENT_IMAGE: litmuschaos/go-runner:ci
+          EXPERIMENT_IMAGE_PULL_POLICY: IfNotPresent
           KUBECONFIG: /home/runner/.kube/config
         run: make node-drain
-        
+
       - name: Running Node Taint experiments
         if: always()
         env:
-          GO_EXPERIMENT_IMAGE: litmuschaos/go-runner:ci        
+          GO_EXPERIMENT_IMAGE: litmuschaos/go-runner:ci
           EXPERIMENT_IMAGE_PULL_POLICY: IfNotPresent
           KUBECONFIG: /home/runner/.kube/config
         run: make node-taint
-        
+
       - name: Deleting KinD cluster
         if: always()
         run: |
